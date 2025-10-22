@@ -1,0 +1,97 @@
+FROM python:3.11-slim
+
+# Installa ffmpeg (necessario per yt-dlp)
+RUN apt-get update && \
+    apt-get install -y ffmpeg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copia requirements e installa dipendenze
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia il codice
+COPY . .
+
+# Crea directory per i download
+RUN mkdir -p downloads
+
+# Esponi la porta
+EXPOSE 8000
+
+# Comando di avvio
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**.dockerignore**
+```
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+downloads/
+.git
+.gitignore
+README.md
+```
+
+## 2. Setup su Northflank
+
+### Via Dashboard Web:
+
+1. **Crea un nuovo progetto**
+   - Vai su Northflank dashboard
+   - Click su "Create Project"
+
+2. **Collega il repository**
+   - Vai su "Services" → "Create Service"
+   - Seleziona "Combined Service"
+   - Collega il tuo repo GitHub/GitLab
+
+3. **Configura il Build**
+   - **Build Type**: Dockerfile (se hai creato il Dockerfile)
+   - Oppure **Buildpack**: Python (se usi solo requirements.txt)
+   - **Dockerfile Path**: `./Dockerfile` (se applicabile)
+
+4. **Configura le variabili d'ambiente**
+```
+   PORT=8000
+   PYTHONUNBUFFERED=1
+```
+
+5. **Configura le risorse**
+   - **CPU**: 0.2 vCPU (per iniziare)
+   - **Memory**: 512 MB (minimo, meglio 1 GB)
+   - **Storage**: 5-10 GB per i download temporanei
+
+6. **Deploy!**
+   - Click su "Deploy Service"
+
+## 3. Struttura file finale del progetto
+```
+ytdlp-api/
+├── main.py                 # Il tuo codice FastAPI
+├── requirements.txt
+├── Dockerfile
+├── .dockerignore
+├── Procfile (opzionale)
+├── .gitignore
+└── README.md
+```
+
+**.gitignore**
+```
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+downloads/
+*.mp3
+*.m4a
+.env
