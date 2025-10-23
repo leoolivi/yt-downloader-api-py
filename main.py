@@ -105,9 +105,9 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
         }
 
 @app.get("/api/search")
-async def search_videos(query: str, limit: int = 10):
+async def search_music(query: str, limit: int = 10):
     """
-    Cerca video su YouTube senza usare API key.
+    Cerca solo video musicali su YouTube senza API key.
     Esempio: /api/search?query=Eminem+Lose+Yourself&limit=5
     """
     try:
@@ -121,13 +121,24 @@ async def search_videos(query: str, limit: int = 10):
             'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         }
 
+        # 🔍 cerca esplicitamente video musicali
+        search_query = f"ytsearch{limit}:{query} official music video"
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            search_query = f"ytsearch{limit}:{query}"
             info = ydl.extract_info(search_query, download=False)
             entries = info.get("entries", [])
 
         results = []
         for e in entries:
+            title = e.get("title", "").lower()
+            uploader = (e.get("uploader") or "").lower()
+
+            # 🎵 Filtra i risultati “non musicali”
+            if any(x in title for x in ["remix", "cover", "reaction", "ai cover", "parody", "mashup", "sped up", "slowed"]):
+                continue
+            if any(x in uploader for x in ["lyrics", "clouds", "topic", "mix"]):
+                continue
+
             results.append({
                 "title": e.get("title"),
                 "url": f"https://www.youtube.com/watch?v={e.get('id')}",
