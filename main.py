@@ -104,6 +104,42 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
             'message': str(e)
         }
 
+@app.get("/api/search")
+async def search_videos(query: str, limit: int = 10):
+    """
+    Cerca video su YouTube senza usare API key.
+    Esempio: /api/search?query=Eminem+Lose+Yourself&limit=5
+    """
+    try:
+        ydl_opts = {
+            'quiet': True,
+            'skip_download': True,
+            'extract_flat': 'in_playlist',
+            'nocheckcertificate': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'referer': 'https://www.youtube.com/',
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        }
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            search_query = f"ytsearch{limit}:{query}"
+            info = ydl.extract_info(search_query, download=False)
+            entries = info.get("entries", [])
+
+        results = []
+        for e in entries:
+            results.append({
+                "title": e.get("title"),
+                "url": f"https://www.youtube.com/watch?v={e.get('id')}",
+                "duration": e.get("duration"),
+                "uploader": e.get("uploader"),
+                "thumbnail": e.get("thumbnails", [{}])[-1].get("url") if e.get("thumbnails") else None
+            })
+
+        return JSONResponse(content={"results": results, "count": len(results)})
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/download", response_model=DownloadResponse)
 async def start_download(request: DownloadRequest, background_tasks: BackgroundTasks):
