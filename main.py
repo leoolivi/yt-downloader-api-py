@@ -152,6 +152,35 @@ async def search_music(query: str, limit: int = 10):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/api/stream")
+async def get_stream_url(url: str, format: str = "audio"):
+    """Ottieni l'URL diretto per lo streaming"""
+    try:
+        ydl_opts = {
+            'format': 'bestaudio/best' if format == 'audio' else 'best',
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+            'user_agent': 'Mozilla/5.0...',
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            # URL diretto per lo streaming
+            stream_url = info['url']
+            
+            return {
+                'stream_url': stream_url,
+                'title': info.get('title'),
+                'duration': info.get('duration'),
+                'format': info.get('format'),
+                'ext': info.get('ext')
+            }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.post("/api/download", response_model=DownloadResponse)
 async def start_download(request: DownloadRequest, background_tasks: BackgroundTasks):
     """Inizia il download dell'audio"""
