@@ -288,6 +288,10 @@ async def root():
         }
     }
 
+@app.get("/keepalive")
+async def root():
+    return {}
+
 
 if __name__ == "__main__":
     import uvicorn
