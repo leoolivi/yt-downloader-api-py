@@ -29,18 +29,16 @@ app.add_middleware(
 DOWNLOAD_DIR = Path("./downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-# Directory per i cookie
-COOKIES_FILE = Path("./cookies.txt")
+# Directory per i cookie - Render monta i Secret Files in /etc/secrets/
+COOKIES_FILE = Path("/etc/secrets/cookies.txt")
 
-# Crea cookies.txt da variabile d'ambiente se esiste
-if os.getenv("YOUTUBE_COOKIES"):
-    try:
-        COOKIES_FILE.write_text(os.getenv("YOUTUBE_COOKIES"))
-        logger.info("✅ Cookies caricati da variabile d'ambiente")
-    except Exception as e:
-        logger.error(f"❌ Errore nel caricare i cookies: {e}")
-elif COOKIES_FILE.exists():
-    logger.info("✅ Cookies trovati in cookies.txt")
+# Fallback: cerca nella directory locale
+if not COOKIES_FILE.exists():
+    COOKIES_FILE = Path("./cookies.txt")
+    logger.warning("⚠️ Cookies non trovati in /etc/secrets/, uso path locale")
+
+if COOKIES_FILE.exists():
+    logger.info(f"✅ Cookies trovati in: {COOKIES_FILE}")
 else:
     logger.warning("⚠️ Nessun cookie trovato - potrebbero esserci problemi con YouTube")
 
@@ -352,7 +350,16 @@ async def test_youtube():
         "cookies_loaded": COOKIES_FILE.exists(),
         "cookies_path": str(COOKIES_FILE),
         "download_dir_exists": DOWNLOAD_DIR.exists(),
+        "secrets_dir_exists": Path("/etc/secrets/").exists(),
     }
+    
+    # Verifica se ci sono file in /etc/secrets/
+    try:
+        secrets_path = Path("/etc/secrets/")
+        if secrets_path.exists():
+            result["secrets_files"] = [f.name for f in secrets_path.iterdir()]
+    except Exception as e:
+        result["secrets_error"] = str(e)
     
     # Test connessione YouTube
     try:

@@ -14,7 +14,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia il codice
 COPY . .
 
-# Esponi la porta (Render usa $PORT)
+# Crea directory per secret files (Render la monta automaticamente)
+RUN mkdir -p /etc/secrets
+
+# Esponi la porta
 EXPOSE 8000
 
 # Comando di avvio
