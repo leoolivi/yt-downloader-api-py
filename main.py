@@ -52,9 +52,12 @@ def get_base_ydl_opts():
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'web', 'ios'],
-                'skip': ['dash', 'hls']
             }
         },
+        # Ignora errori di formato non disponibile
+        'ignoreerrors': False,
+        # Preferenze di formato più flessibili
+        'format_sort': ['quality', 'res', 'fps', 'hdr:12', 'codec:vp9.2', 'size', 'br', 'asr', 'proto'],
     }
     
     # Se esiste il file cookies.txt, usalo
@@ -87,7 +90,8 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
     
     ydl_opts = get_base_ydl_opts()
     ydl_opts.update({
-        'format': 'bestaudio/best',
+        # Formato più flessibile che accetta qualsiasi audio disponibile
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
         'outtmpl': str(output_path),
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -97,6 +101,7 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
         'progress_hooks': [lambda d: progress_hook(d, task_id)],
         'quiet': False,
         'no_warnings': False,
+        'merge_output_format': audio_format,
     })
     
     try:
@@ -175,7 +180,8 @@ async def get_stream_url(url: str, format: str = "audio"):
     try:
         ydl_opts = get_base_ydl_opts()
         ydl_opts.update({
-            'format': 'bestaudio/best' if format == 'audio' else 'best',
+            # Formato più flessibile
+            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best' if format == 'audio' else 'best',
             'quiet': True,
             'no_warnings': True,
         })
