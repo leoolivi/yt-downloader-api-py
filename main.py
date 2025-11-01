@@ -72,22 +72,45 @@ def get_base_ydl_opts():
     """Opzioni base per yt-dlp ottimizzate per Render"""
     opts = {
         'nocheckcertificate': True,
-        # User agent Android - più affidabile
-        'user_agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
-        'referer': 'https://www.youtube.com/',
+        # User agent Android Creator - client più permissivo
+        'user_agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 13; en_US) gzip',
         'extractor_args': {
             'youtube': {
-                'player_client': ['android'],  # Solo Android client
+                'player_client': ['android_creator', 'ios', 'mweb'],
+                'player_skip': ['webpage', 'configs'],
+                'max_comments': [0],
             }
         },
         'ignoreerrors': False,
         'no_warnings': True,
+        # Evita formati che richiedono OAuth
+        'format': 'best[protocol^=http]',
+        # Headers aggiuntivi
+        'http_headers': {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+        }
     }
     
-    # Se esiste il file cookies.txt, usalo
+    # Aggiungi proxy se disponibile
+    proxy_url = os.getenv('PROXY_URL')
+    if proxy_url:
+        opts['proxy'] = proxy_url
+        logger.info("🌐 Usando proxy")
+    
+    # Usa i cookie se disponibili (ma potrebbero non bastare)
     if COOKIES_FILE.exists():
         opts['cookiefile'] = str(COOKIES_FILE)
         logger.info("🍪 Usando cookies per la richiesta")
+    
+    # Aggiungi po_token e visitor_data se disponibili come env vars
+    po_token = os.getenv('YOUTUBE_PO_TOKEN')
+    visitor_data = os.getenv('YOUTUBE_VISITOR_DATA')
+    
+    if po_token and visitor_data:
+        opts['extractor_args']['youtube']['po_token'] = [po_token]
+        opts['extractor_args']['youtube']['visitor_data'] = [visitor_data]
+        logger.info("🔑 Usando po_token e visitor_data")
     
     return opts
 
@@ -222,13 +245,56 @@ async def search_music(query: str, limit: int = 10):
 async def get_stream_url(url: str, format: str = "audio"):
     """Ottieni l'URL diretto per lo streaming (CONSIGLIATO per Render)"""
     try:
+        # Prova prima senza cookie (client iOS)
+        ydl_opts_no_auth = {
+            'nocheckcertificate': True,
+            'quiet': True,
+            'no_warnings': True,
+            'format': 'bestaudio[ext=m4a]/bestaudio/best' if format == 'audio' else 'best',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android_creator'],
+                    'player_skip': ['webpage'],
+                }
+            },
+        }
+        
+        logger.info(f"🎵 Richiesta stream (no-auth): {url}")
+        
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts_no_auth) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                # Trova il miglior formato audio
+                formats = info.get('formats', [])
+                audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('url')]
+                
+                if audio_formats:
+                    audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
+                    best_audio = audio_formats[0]
+                    
+                    result = {
+                        'stream_url': best_audio['url'],
+                        'title': info.get('title'),
+                        'duration': info.get('duration'),
+                        'format': best_audio.get('format_note', 'audio'),
+                        'quality': f"{best_audio.get('abr', 'N/A')}kbps",
+                        'ext': best_audio.get('ext')
+                    }
+                    
+                    logger.info(f"✅ Stream URL generato (no-auth): {info.get('title')}")
+                    return result
+        except Exception as e:
+            logger.warning(f"⚠️ No-auth fallito: {e}, provo con cookies...")
+        
+        # Fallback: prova con cookies
         ydl_opts = get_base_ydl_opts()
         ydl_opts.update({
-            'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best' if format == 'audio' else 'best',
+            'format': 'bestaudio[ext=m4a]/bestaudio/best' if format == 'audio' else 'best',
             'quiet': True,
         })
         
-        logger.info(f"🎵 Richiesta stream: {url}")
+        logger.info(f"🎵 Richiesta stream (with-auth): {url}")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -253,7 +319,7 @@ async def get_stream_url(url: str, format: str = "audio"):
                 'ext': best_audio.get('ext')
             }
             
-            logger.info(f"✅ Stream URL generato: {info.get('title')}")
+            logger.info(f"✅ Stream URL generato (with-auth): {info.get('title')}")
             return result
             
     except Exception as e:
@@ -358,6 +424,33 @@ async def cleanup_file(task_id: str):
         del download_status[task_id]
     
     return {"message": "Cleaned up successfully"}
+
+
+@app.get("/debug/cookies")
+async def debug_cookies():
+    """Verifica lo stato dei cookies"""
+    result = {
+        "cookies_file_exists": COOKIES_FILE.exists(),
+        "cookies_path": str(COOKIES_FILE),
+    }
+    
+    if COOKIES_FILE.exists():
+        try:
+            content = COOKIES_FILE.read_text()
+            lines = content.split('\n')
+            result["cookies_lines"] = len(lines)
+            result["cookies_first_line"] = lines[0] if lines else None
+            result["cookies_valid_format"] = content.startswith('# Netscape HTTP Cookie File')
+            result["cookies_size_kb"] = round(len(content) / 1024, 2)
+            
+            # Conta i cookie YouTube
+            youtube_cookies = [l for l in lines if '.youtube.com' in l and not l.startswith('#')]
+            result["youtube_cookies_count"] = len(youtube_cookies)
+            
+        except Exception as e:
+            result["error"] = str(e)
+    
+    return result
 
 
 @app.get("/debug/test")
