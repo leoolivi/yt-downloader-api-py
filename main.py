@@ -24,6 +24,9 @@ app.add_middleware(
 DOWNLOAD_DIR = Path("./downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
+# Directory per i cookie
+COOKIES_FILE = Path("./cookies.txt")
+
 # Store per tracciare lo stato dei download
 download_status = {}
 
@@ -38,6 +41,27 @@ class DownloadResponse(BaseModel):
     task_id: str
     status: str
     message: str
+
+
+def get_base_ydl_opts():
+    """Opzioni base per yt-dlp con gestione cookie"""
+    opts = {
+        'nocheckcertificate': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web', 'ios'],
+                'skip': ['dash', 'hls']
+            }
+        },
+    }
+    
+    # Se esiste il file cookies.txt, usalo
+    if COOKIES_FILE.exists():
+        opts['cookiefile'] = str(COOKIES_FILE)
+    
+    return opts
 
 
 def progress_hook(d, task_id):
@@ -61,7 +85,8 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
     """Funzione asincrona per scaricare l'audio"""
     output_path = DOWNLOAD_DIR / f"{task_id}.%(ext)s"
     
-    ydl_opts = {
+    ydl_opts = get_base_ydl_opts()
+    ydl_opts.update({
         'format': 'bestaudio/best',
         'outtmpl': str(output_path),
         'postprocessors': [{
@@ -72,12 +97,7 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
         'progress_hooks': [lambda d: progress_hook(d, task_id)],
         'quiet': False,
         'no_warnings': False,
-        # Fix per errore 403
-        'nocheckcertificate': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'referer': 'https://www.youtube.com/',
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-    }
+    })
     
     try:
         download_status[task_id] = {'status': 'starting', 'progress': '0%'}
@@ -111,15 +131,12 @@ async def search_music(query: str, limit: int = 10):
     Esempio: /api/search?query=Eminem+Lose+Yourself&limit=5
     """
     try:
-        ydl_opts = {
+        ydl_opts = get_base_ydl_opts()
+        ydl_opts.update({
             'quiet': True,
             'skip_download': True,
             'extract_flat': 'in_playlist',
-            'nocheckcertificate': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'referer': 'https://www.youtube.com/',
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        }
+        })
 
         # 🔍 cerca esplicitamente video musicali
         search_query = f"ytsearch{limit}:{query} official music video"
@@ -133,7 +150,7 @@ async def search_music(query: str, limit: int = 10):
             title = e.get("title", "").lower()
             uploader = (e.get("uploader") or "").lower()
 
-            # 🎵 Filtra i risultati “non musicali”
+            # 🎵 Filtra i risultati "non musicali"
             if any(x in title for x in ["remix", "cover", "reaction", "ai cover", "parody", "mashup", "sped up", "slowed"]):
                 continue
             if any(x in uploader for x in ["lyrics", "clouds", "topic", "mix"]):
@@ -156,14 +173,12 @@ async def search_music(query: str, limit: int = 10):
 async def get_stream_url(url: str, format: str = "audio"):
     """Ottieni l'URL diretto per lo streaming"""
     try:
-        ydl_opts = {
+        ydl_opts = get_base_ydl_opts()
+        ydl_opts.update({
             'format': 'bestaudio/best' if format == 'audio' else 'best',
             'quiet': True,
             'no_warnings': True,
-            'nocheckcertificate': True,
-            'user_agent': 'Mozilla/5.0...',
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        }
+        })
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -238,14 +253,11 @@ async def download_file(task_id: str):
 async def get_video_info(url: str):
     """Ottieni informazioni sul video senza scaricarlo"""
     try:
-        ydl_opts = {
+        ydl_opts = get_base_ydl_opts()
+        ydl_opts.update({
             'quiet': True,
             'no_warnings': True,
-            'nocheckcertificate': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'referer': 'https://www.youtube.com/',
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        }
+        })
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -289,8 +301,8 @@ async def root():
     }
 
 @app.get("/keepalive")
-async def root():
-    return {}
+async def keepalive():
+    return {"status": "alive"}
 
 
 if __name__ == "__main__":
