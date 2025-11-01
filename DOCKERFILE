@@ -1,24 +1,26 @@
 FROM python:3.11-slim
 
-# Installa FFmpeg
+# Installa dipendenze di sistema
 RUN apt-get update && \
-    apt-get install -y ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    ffmpeg \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copia requirements
+# Copia e installa requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia il codice
+# Installa pacchetti Python (senza cache per ridurre dimensione)
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copia il resto del codice
 COPY . .
 
-# Crea directory per secret files (Render la monta automaticamente)
-RUN mkdir -p /etc/secrets
-
-# Esponi la porta
+# Esponi la porta (Render usa $PORT)
 EXPOSE 8000
 
 # Comando di avvio
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
