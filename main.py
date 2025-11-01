@@ -241,6 +241,130 @@ async def search_music(query: str, limit: int = 10):
         logger.error(f"❌ Errore ricerca: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/api/stream-invidious")
+async def get_stream_via_invidious(url: str):
+    """Stream usando Invidious (CONSIGLIATO - no cookies/proxy needed!)"""
+    import httpx
+    
+    # Estrai video ID
+    video_id = url.split('v=')[-1].split('&')[0]
+    
+    # Istanze Invidious pubbliche
+    instances = [
+        "https://inv.nadeko.net",
+        "https://invidious.privacyredirect.com",
+        "https://invidious.protokolla.fi",
+        "https://yt.artemislena.eu",
+        "https://invidious.flokinet.to",
+        "https://invidious.lunar.icu",
+    ]
+    
+    logger.info(f"🔄 Tentativo stream Invidious per: {video_id}")
+    
+    for instance in instances:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(
+                    f"{instance}/api/v1/videos/{video_id}",
+                    follow_redirects=True
+                )
+                
+                if response.status_code != 200:
+                    continue
+                
+                data = response.json()
+                
+                # Trova i formati audio
+                audio_formats = [
+                    f for f in data.get('adaptiveFormats', [])
+                    if f.get('type', '').startswith('audio')
+                ]
+                
+                if not audio_formats:
+                    continue
+                
+                # Ordina per qualità
+                audio_formats.sort(key=lambda x: int(x.get('bitrate', 0)), reverse=True)
+                best = audio_formats[0]
+                
+                result = {
+                    'stream_url': best['url'],
+                    'title': data.get('title'),
+                    'duration': data.get('lengthSeconds'),
+                    'quality': f"{int(best.get('bitrate', 0))/1000:.0f}kbps",
+                    'format': best.get('type'),
+                    'instance_used': instance
+                }
+                
+                logger.info(f"✅ Stream Invidious ottenuto da: {instance}")
+                return result
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Invidious {instance} fallito: {e}")
+            continue
+    
+    raise HTTPException(
+        status_code=503, 
+        detail="Tutte le istanze Invidious hanno fallito. Riprova tra qualche secondo."
+    )
+
+
+@app.get("/api/stream-proxy")
+async def get_stream_url_via_proxy(url: str):
+    """Stream usando proxy pubblici gratuiti come fallback"""
+    import httpx
+    
+    # Lista di proxy pubblici gratuiti (cambiano spesso)
+    proxies = [
+        None,  # Prova prima senza proxy
+        "http://proxy.toolskk.com:8080",
+        "http://pubproxy.com:8080",
+        "socks5://proxy.server:1080",
+    ]
+    
+    video_id = url.split('v=')[-1].split('&')[0]
+    
+    for proxy in proxies:
+        try:
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['ios', 'android_creator'],
+                    }
+                },
+            }
+            
+            if proxy:
+                ydl_opts['proxy'] = proxy
+                logger.info(f"🌐 Tentativo con proxy: {proxy}")
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                formats = info.get('formats', [])
+                audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('url')]
+                
+                if audio_formats:
+                    audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
+                    best = audio_formats[0]
+                    
+                    logger.info(f"✅ Stream ottenuto tramite proxy: {proxy or 'diretto'}")
+                    return {
+                        'stream_url': best['url'],
+                        'title': info.get('title'),
+                        'duration': info.get('duration'),
+                        'quality': f"{best.get('abr', 'N/A')}kbps"
+                    }
+        except Exception as e:
+            logger.warning(f"⚠️ Proxy {proxy} fallito: {e}")
+            continue
+    
+    raise HTTPException(status_code=503, detail="Tutti i proxy hanno fallito")
+
+
 @app.get("/api/stream")
 async def get_stream_url(url: str, format: str = "audio"):
     """Ottieni l'URL diretto per lo streaming (CONSIGLIATO per Render)"""
