@@ -29,18 +29,8 @@ app.add_middleware(
 DOWNLOAD_DIR = Path("./downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-# Directory per i cookie - Render monta i Secret Files in /etc/secrets/
+# Directory per i cookie
 COOKIES_FILE = Path("/etc/secrets/cookies.txt")
-
-# Fallback: cerca nella directory locale
-if not COOKIES_FILE.exists():
-    COOKIES_FILE = Path("./cookies.txt")
-    logger.warning("⚠️ Cookies non trovati in /etc/secrets/, uso path locale")
-
-if COOKIES_FILE.exists():
-    logger.info(f"✅ Cookies trovati in: {COOKIES_FILE}")
-else:
-    logger.warning("⚠️ Nessun cookie trovato - potrebbero esserci problemi con YouTube")
 
 # Store per tracciare lo stato dei download
 download_status = {}
