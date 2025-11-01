@@ -8,6 +8,11 @@ import uuid
 from pathlib import Path
 import asyncio
 from typing import Optional
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="YT-DLP Audio Downloader API")
 
@@ -27,6 +32,18 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 # Directory per i cookie
 COOKIES_FILE = Path("./cookies.txt")
 
+# Crea cookies.txt da variabile d'ambiente se esiste
+if os.getenv("YOUTUBE_COOKIES"):
+    try:
+        COOKIES_FILE.write_text(os.getenv("YOUTUBE_COOKIES"))
+        logger.info("✅ Cookies caricati da variabile d'ambiente")
+    except Exception as e:
+        logger.error(f"❌ Errore nel caricare i cookies: {e}")
+elif COOKIES_FILE.exists():
+    logger.info("✅ Cookies trovati in cookies.txt")
+else:
+    logger.warning("⚠️ Nessun cookie trovato - potrebbero esserci problemi con YouTube")
+
 # Store per tracciare lo stato dei download
 download_status = {}
 
@@ -44,25 +61,25 @@ class DownloadResponse(BaseModel):
 
 
 def get_base_ydl_opts():
-    """Opzioni base per yt-dlp con gestione cookie"""
+    """Opzioni base per yt-dlp ottimizzate per Render"""
     opts = {
         'nocheckcertificate': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        # User agent Android - più affidabile
+        'user_agent': 'com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip',
         'referer': 'https://www.youtube.com/',
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web', 'ios'],
+                'player_client': ['android'],  # Solo Android client
             }
         },
-        # Ignora errori di formato non disponibile
         'ignoreerrors': False,
-        # Preferenze di formato più flessibili
-        'format_sort': ['quality', 'res', 'fps', 'hdr:12', 'codec:vp9.2', 'size', 'br', 'asr', 'proto'],
+        'no_warnings': True,
     }
     
     # Se esiste il file cookies.txt, usalo
     if COOKIES_FILE.exists():
         opts['cookiefile'] = str(COOKIES_FILE)
+        logger.info("🍪 Usando cookies per la richiesta")
     
     return opts
 
@@ -90,7 +107,7 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
     
     ydl_opts = get_base_ydl_opts()
     ydl_opts.update({
-        # Formato più flessibile che accetta qualsiasi audio disponibile
+        # Formato flessibile che funziona con Android client
         'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
         'outtmpl': str(output_path),
         'postprocessors': [{
@@ -100,12 +117,12 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
         }],
         'progress_hooks': [lambda d: progress_hook(d, task_id)],
         'quiet': False,
-        'no_warnings': False,
         'merge_output_format': audio_format,
     })
     
     try:
         download_status[task_id] = {'status': 'starting', 'progress': '0%'}
+        logger.info(f"📥 Inizio download: {url}")
         
         # Esegui il download in un thread separato per non bloccare
         loop = asyncio.get_event_loop()
@@ -117,13 +134,18 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
         # Trova il file scaricato
         output_file = DOWNLOAD_DIR / f"{task_id}.{audio_format}"
         
+        if not output_file.exists():
+            raise FileNotFoundError(f"File non trovato: {output_file}")
+        
         download_status[task_id] = {
             'status': 'completed',
             'progress': '100%',
             'file': str(output_file)
         }
+        logger.info(f"✅ Download completato: {output_file}")
         
     except Exception as e:
+        logger.error(f"❌ Errore download: {e}")
         download_status[task_id] = {
             'status': 'error',
             'message': str(e)
@@ -146,12 +168,17 @@ async def search_music(query: str, limit: int = 10):
         # 🔍 cerca esplicitamente video musicali
         search_query = f"ytsearch{limit}:{query} official music video"
 
+        logger.info(f"🔍 Ricerca: {search_query}")
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(search_query, download=False)
             entries = info.get("entries", [])
 
         results = []
         for e in entries:
+            if not e:
+                continue
+                
             title = e.get("title", "").lower()
             uploader = (e.get("uploader") or "").lower()
 
@@ -169,43 +196,61 @@ async def search_music(query: str, limit: int = 10):
                 "thumbnail": e.get("thumbnails", [{}])[-1].get("url") if e.get("thumbnails") else None
             })
 
+        logger.info(f"✅ Trovati {len(results)} risultati")
         return JSONResponse(content={"results": results, "count": len(results)})
 
     except Exception as e:
+        logger.error(f"❌ Errore ricerca: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/stream")
 async def get_stream_url(url: str, format: str = "audio"):
-    """Ottieni l'URL diretto per lo streaming"""
+    """Ottieni l'URL diretto per lo streaming (CONSIGLIATO per Render)"""
     try:
         ydl_opts = get_base_ydl_opts()
         ydl_opts.update({
-            # Formato più flessibile
             'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best' if format == 'audio' else 'best',
             'quiet': True,
-            'no_warnings': True,
         })
+        
+        logger.info(f"🎵 Richiesta stream: {url}")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # URL diretto per lo streaming
-            stream_url = info['url']
+            # Trova il miglior formato audio
+            formats = info.get('formats', [])
+            audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('url')]
             
-            return {
-                'stream_url': stream_url,
+            if not audio_formats:
+                raise HTTPException(status_code=404, detail="Nessun formato audio disponibile")
+            
+            # Ordina per qualità audio
+            audio_formats.sort(key=lambda x: x.get('abr', 0) or 0, reverse=True)
+            best_audio = audio_formats[0]
+            
+            result = {
+                'stream_url': best_audio['url'],
                 'title': info.get('title'),
                 'duration': info.get('duration'),
-                'format': info.get('format'),
-                'ext': info.get('ext')
+                'format': best_audio.get('format_note', 'audio'),
+                'quality': f"{best_audio.get('abr', 'N/A')}kbps",
+                'ext': best_audio.get('ext')
             }
+            
+            logger.info(f"✅ Stream URL generato: {info.get('title')}")
+            return result
+            
     except Exception as e:
+        logger.error(f"❌ Errore stream: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/download", response_model=DownloadResponse)
 async def start_download(request: DownloadRequest, background_tasks: BackgroundTasks):
-    """Inizia il download dell'audio"""
+    """Inizia il download dell'audio (Attenzione: Render ha filesystem effimero)"""
     task_id = str(uuid.uuid4())
+    
+    logger.info(f"📝 Nuovo task download: {task_id}")
     
     # Avvia il download in background
     background_tasks.add_task(
@@ -262,20 +307,26 @@ async def get_video_info(url: str):
         ydl_opts = get_base_ydl_opts()
         ydl_opts.update({
             'quiet': True,
-            'no_warnings': True,
         })
+        
+        logger.info(f"ℹ️ Richiesta info: {url}")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            return {
+            result = {
                 'title': info.get('title'),
                 'duration': info.get('duration'),
                 'thumbnail': info.get('thumbnail'),
                 'uploader': info.get('uploader'),
                 'formats_available': len(info.get('formats', []))
             }
+            
+            logger.info(f"✅ Info recuperate: {info.get('title')}")
+            return result
+            
     except Exception as e:
+        logger.error(f"❌ Errore info: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -288,29 +339,74 @@ async def cleanup_file(task_id: str):
             file_path = Path(status['file'])
             if file_path.exists():
                 file_path.unlink()
+                logger.info(f"🗑️ File eliminato: {file_path}")
         del download_status[task_id]
     
     return {"message": "Cleaned up successfully"}
+
+
+@app.get("/debug/test")
+async def test_youtube():
+    """Test connessione YouTube e diagnostica"""
+    result = {
+        "cookies_loaded": COOKIES_FILE.exists(),
+        "cookies_path": str(COOKIES_FILE),
+        "download_dir_exists": DOWNLOAD_DIR.exists(),
+    }
+    
+    # Test connessione YouTube
+    try:
+        ydl_opts = get_base_ydl_opts()
+        ydl_opts['quiet'] = True
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info("https://www.youtube.com/watch?v=jNQXAC9IVRw", download=False)
+            
+        result.update({
+            "youtube_connection": "✅ OK",
+            "test_video_title": info.get('title'),
+            "formats_available": len(info.get('formats', [])),
+            "audio_formats": len([f for f in info.get('formats', []) if f.get('acodec') != 'none']),
+        })
+    except Exception as e:
+        result.update({
+            "youtube_connection": "❌ ERROR",
+            "error": str(e)
+        })
+    
+    # Test FFmpeg
+    try:
+        import subprocess
+        ffmpeg_version = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        result['ffmpeg'] = "✅ Installato" if ffmpeg_version.returncode == 0 else "❌ Non trovato"
+    except:
+        result['ffmpeg'] = "❌ Non trovato"
+    
+    return result
 
 
 @app.get("/")
 async def root():
     return {
         "message": "YT-DLP Audio Downloader API",
+        "status": "🚀 Running",
+        "cookies": "✅ Loaded" if COOKIES_FILE.exists() else "❌ Missing",
         "endpoints": {
-            "POST /api/download": "Start audio download",
-            "GET /api/status/{task_id}": "Check download status",
-            "GET /api/download/{task_id}": "Download completed file",
-            "GET /api/info?url=": "Get video info",
-            "DELETE /api/cleanup/{task_id}": "Delete downloaded file"
+            "GET /api/search?query=...": "Cerca video musicali",
+            "GET /api/stream?url=...": "Ottieni URL stream (CONSIGLIATO)",
+            "POST /api/download": "Download audio (richiede FFmpeg)",
+            "GET /api/status/{task_id}": "Stato download",
+            "GET /api/info?url=...": "Info video",
+            "GET /debug/test": "Test diagnostica"
         }
     }
 
 @app.get("/keepalive")
 async def keepalive():
-    return {"status": "alive"}
+    return {"status": "alive", "cookies": COOKIES_FILE.exists()}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
