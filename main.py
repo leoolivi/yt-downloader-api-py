@@ -30,7 +30,27 @@ DOWNLOAD_DIR = Path("./downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 # Directory per i cookie
-COOKIES_FILE = Path("/etc/secrets/cookies.txt")
+# Render monta i Secret Files in /etc/secrets/ (READ-ONLY)
+# Dobbiamo copiarli in una directory scrivibile
+SOURCE_COOKIES = Path("/etc/secrets/cookies.txt")
+COOKIES_FILE = Path("./cookies.txt")
+
+# Copia i cookies da /etc/secrets/ alla directory locale (scrivibile)
+if SOURCE_COOKIES.exists():
+    try:
+        import shutil
+        shutil.copy(SOURCE_COOKIES, COOKIES_FILE)
+        logger.info(f"✅ Cookies copiati da {SOURCE_COOKIES} a {COOKIES_FILE}")
+    except Exception as e:
+        logger.error(f"❌ Errore nel copiare i cookies: {e}")
+        # Prova a leggere direttamente (potrebbe funzionare per alcune operazioni)
+        if SOURCE_COOKIES.exists():
+            COOKIES_FILE = SOURCE_COOKIES
+            logger.info(f"⚠️ Uso diretto di {SOURCE_COOKIES}")
+elif COOKIES_FILE.exists():
+    logger.info(f"✅ Cookies trovati in: {COOKIES_FILE}")
+else:
+    logger.warning("⚠️ Nessun cookie trovato - potrebbero esserci problemi con YouTube")
 
 # Store per tracciare lo stato dei download
 download_status = {}
@@ -95,17 +115,17 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
     
     ydl_opts = get_base_ydl_opts()
     ydl_opts.update({
-        # Formato flessibile che funziona con Android client
+        # Download diretto senza conversione (FFmpeg non disponibile su Render Free)
         'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
         'outtmpl': str(output_path),
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': audio_format,
-            'preferredquality': quality,
-        }],
+        # COMMENTATO: richiede FFmpeg
+        # 'postprocessors': [{
+        #     'key': 'FFmpegExtractAudio',
+        #     'preferredcodec': audio_format,
+        #     'preferredquality': quality,
+        # }],
         'progress_hooks': [lambda d: progress_hook(d, task_id)],
         'quiet': False,
-        'merge_output_format': audio_format,
     })
     
     try:
@@ -119,11 +139,18 @@ async def download_audio(url: str, task_id: str, audio_format: str, quality: str
             lambda: yt_dlp.YoutubeDL(ydl_opts).download([str(url)])
         )
         
-        # Trova il file scaricato
-        output_file = DOWNLOAD_DIR / f"{task_id}.{audio_format}"
+        # Trova il file scaricato (può essere m4a, webm, etc)
+        possible_extensions = ['m4a', 'webm', 'opus', 'mp3', 'ogg']
+        output_file = None
         
-        if not output_file.exists():
-            raise FileNotFoundError(f"File non trovato: {output_file}")
+        for ext in possible_extensions:
+            potential_file = DOWNLOAD_DIR / f"{task_id}.{ext}"
+            if potential_file.exists():
+                output_file = potential_file
+                break
+        
+        if not output_file:
+            raise FileNotFoundError(f"File non trovato con nessuna estensione comune")
         
         download_status[task_id] = {
             'status': 'completed',
@@ -336,9 +363,12 @@ async def cleanup_file(task_id: str):
 @app.get("/debug/test")
 async def test_youtube():
     """Test connessione YouTube e diagnostica"""
+    source_cookies = Path("/etc/secrets/cookies.txt")
+    
     result = {
         "cookies_loaded": COOKIES_FILE.exists(),
         "cookies_path": str(COOKIES_FILE),
+        "source_cookies_exists": source_cookies.exists(),
         "download_dir_exists": DOWNLOAD_DIR.exists(),
         "secrets_dir_exists": Path("/etc/secrets/").exists(),
     }
