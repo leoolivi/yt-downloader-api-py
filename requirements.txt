@@ -4,3 +4,4 @@ yt-dlp
 python-multipart
 pydantic-core
 curl_cffi
+httpx
